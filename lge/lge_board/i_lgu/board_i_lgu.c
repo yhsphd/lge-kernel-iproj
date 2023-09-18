@@ -86,7 +86,7 @@
 #include "devices.h"
 #include "devices_i_lgu.h"
 #include <mach/cpuidle.h>
-#include "pm.h"
+#include <mach/pm.h>
 #include "mpm.h"
 #include "spm.h"
 #include "rpm_log.h"
@@ -104,6 +104,7 @@
 
 #include "board_lge.h"
 #include "board_i_lgu.h"
+#include <mach/iommu_domains.h>
 
 #define MSM_SHARED_RAM_PHYS 0x40000000
 
@@ -953,7 +954,7 @@ static int msm_hsusb_config_vddcx(int high)
 	return ret;
 }
 
-#ifdef CONFIG_LGE_PMIC8058_REGULATOR
+#ifdef CONFIG_USB_G_LGE_ANDROID_FACTORY
 #define USB_PHY_3P3_VOL_MIN	3075000 /* uV */
 #define USB_PHY_3P3_VOL_MAX	3075000 /* uV */
 #else
@@ -1110,9 +1111,6 @@ static int msm_hsusb_ldo_enable(int on)
 #ifdef CONFIG_USB_EHCI_MSM_72K
 static void msm_hsusb_vbus_power(unsigned phy_info, int on)
 {
-#ifdef CONFIG_LGE_PMIC8901_REGULATOR
-		return;
-#else
 	static struct regulator *votg_5v_switch;
 	static struct regulator *ext_5v_reg;
 	static int vbus_is_on;
@@ -1156,7 +1154,6 @@ static void msm_hsusb_vbus_power(unsigned phy_info, int on)
 	}
 
 	vbus_is_on = on;
-#endif	
 }
 
 static struct msm_usb_host_platform_data msm_usb_host_pdata = {
@@ -1811,7 +1808,7 @@ static struct touch_operation_role touch_role = {
 	.reset_delay			= 20,
 	.suspend_pwr			= POWER_OFF,
 	.jitter_filter_enable	= 1,
-	.jitter_curr_ratio		= 30,	
+	.jitter_curr_ratio		= 30,
     .accuracy_filter_enable = 1,
 	.sleep_mode             = 0,
 	.ta_debouncing_mode     = 1,
@@ -3072,10 +3069,12 @@ static struct platform_device *surf_devices[] __initdata = {
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
 static struct ion_cp_heap_pdata cp_mm_ion_pdata = {
 	.permission_type = IPT_TYPE_MM_CARVEOUT,
-	.align = PAGE_SIZE,
+	.align = SZ_64K,
 	.request_region = request_smi_region,
 	.release_region = release_smi_region,
 	.setup_region = setup_smi_region,
+	.iommu_map_all = 1,
+	.iommu_2x_map_domain = VIDEO_DOMAIN,
 };
 
 static struct ion_cp_heap_pdata cp_mfc_ion_pdata = {
@@ -3154,7 +3153,6 @@ static struct ion_platform_data ion_pdata = {
 			.memory_type = ION_EBI_TYPE,
 			.extra_data = (void *)&co_ion_pdata,
 		},
-#if 0		
 		{
 			.id	= ION_CAMERA_HEAP_ID,
 			.type	= ION_HEAP_TYPE_CARVEOUT,
@@ -3163,7 +3161,6 @@ static struct ion_platform_data ion_pdata = {
 			.memory_type = ION_EBI_TYPE,
 			.extra_data = &co_ion_pdata,
 		},
-#endif		
 		{
 			.id	= ION_CP_WB_HEAP_ID,
 			.type	= ION_HEAP_TYPE_CP,
@@ -3243,12 +3240,29 @@ static void reserve_ion_memory(void)
 			}
 		}
 	}
+	
+	/* Verify size of heap is a multiple of 64K */
+	for (i = 0; i < ion_pdata.nr; i++) {
+		struct ion_platform_heap *heap = &(ion_pdata.heaps[i]);
+
+		if (heap->extra_data && heap->type == ION_HEAP_TYPE_CP) {
+			int map_all = ((struct ion_cp_heap_pdata *)
+					heap->extra_data)->iommu_map_all;
+
+			if (map_all && (heap->size & (SZ_64K-1))) {
+				heap->size = ALIGN(heap->size, SZ_64K);
+				pr_err("Heap %s size is not a multiple of 64K. Adjusting size to %x\n",
+						heap->name, heap->size);
+
+			}
+		}
+	}
 
 	msm8x60_reserve_table[MEMTYPE_EBI1].size += msm_ion_sf_size;
 	msm8x60_reserve_table[MEMTYPE_SMI].size += MSM_ION_MM_FW_SIZE;
 	msm8x60_reserve_table[MEMTYPE_SMI].size += MSM_ION_MM_SIZE;
 	msm8x60_reserve_table[MEMTYPE_SMI].size += MSM_ION_MFC_SIZE;
-//	msm8x60_reserve_table[MEMTYPE_EBI1].size += MSM_ION_CAMERA_SIZE;
+	msm8x60_reserve_table[MEMTYPE_EBI1].size += MSM_ION_CAMERA_SIZE;
 	msm8x60_reserve_table[MEMTYPE_EBI1].size += MSM_ION_WB_SIZE;
 	msm8x60_reserve_table[MEMTYPE_EBI1].size += MSM_ION_AUDIO_SIZE;
 #endif
